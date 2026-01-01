@@ -49,6 +49,25 @@ def get_movie_by_id(film_id):
         logger.error(f"Ошибка при запросе к API: {e}")
         return None
 
+# Функция для получения трейлеров
+def get_movie_videos(film_id):
+    url = f'{KINOPOISK_API_URL}/v2.2/films/{film_id}/videos'
+    headers = {
+        'X-API-KEY': KINOPOISK_API_KEY,
+        'Content-Type': 'application/json',
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        # Ищем трейлер
+        trailers = [item for item in data.get('items', []) if item.get('site') == 'YOUTUBE']
+        if trailers:
+            return trailers[0].get('url')
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка при получении трейлеров: {e}")
+        return None
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -162,17 +181,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             poster_url = movie.get('posterUrl')
             info = format_movie_info(movie)
             
+            # Получаем трейлер
+            trailer_url = get_movie_videos(film_id)
+            
+            # Создаем кнопку трейлера если есть
+            reply_markup = None
+            if trailer_url:
+                keyboard = [[InlineKeyboardButton("🎬 Смотреть трейлер", url=trailer_url)]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+            
             if poster_url:
                 try:
                     await update.message.reply_photo(
                         photo=poster_url,
                         caption=info,
-                        parse_mode='HTML'
+                        parse_mode='HTML',
+                        reply_markup=reply_markup
                     )
                 except:
-                    await update.message.reply_text(info, parse_mode='HTML')
+                    await update.message.reply_text(info, parse_mode='HTML', reply_markup=reply_markup)
             else:
-                await update.message.reply_text(info, parse_mode='HTML')
+                await update.message.reply_text(info, parse_mode='HTML', reply_markup=reply_markup)
     else:
         # Нашли несколько - показываем список
         keyboard = []
@@ -205,17 +234,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         poster_url = movie.get('posterUrl')
         info = format_movie_info(movie)
         
+        # Получаем трейлер
+        trailer_url = get_movie_videos(film_id)
+        
+        # Создаем кнопку трейлера если есть
+        reply_markup = None
+        if trailer_url:
+            keyboard = [[InlineKeyboardButton("🎬 Смотреть трейлер", url=trailer_url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        
         if poster_url:
             try:
                 await query.message.reply_photo(
                     photo=poster_url,
                     caption=info,
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
             except:
-                await query.message.reply_text(info, parse_mode='HTML')
+                await query.message.reply_text(info, parse_mode='HTML', reply_markup=reply_markup)
         else:
-            await query.message.reply_text(info, parse_mode='HTML')
+            await query.message.reply_text(info, parse_mode='HTML', reply_markup=reply_markup)
     else:
         await query.message.reply_text('Ошибка при получении информации о фильме.')
 
