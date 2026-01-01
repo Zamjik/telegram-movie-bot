@@ -3,6 +3,7 @@ import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import requests
+from deep_translator import GoogleTranslator
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -12,9 +13,24 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8305087339:AAGHOIGKPC9DjAkxfEQEIsXblXOE0xG0IDU')
 OMDB_API_KEY = os.environ.get('OMDB_API_KEY', 'd6e8cba2')
 
+# Функция для определения языка и перевода
+def translate_to_english(text):
+    try:
+        # Проверяем, есть ли русские буквы
+        if any('\u0400' <= char <= '\u04FF' for char in text):
+            translated = GoogleTranslator(source='ru', target='en').translate(text)
+            logger.info(f"Перевод: '{text}' -> '{translated}'")
+            return translated
+        return text
+    except Exception as e:
+        logger.error(f"Ошибка перевода: {e}")
+        return text
+
 # Функция для поиска фильма
 def search_movie(title):
-    url = f'http://www.omdbapi.com/?t={title}&apikey={OMDB_API_KEY}'
+    # Переводим название на английский если нужно
+    english_title = translate_to_english(title)
+    url = f'http://www.omdbapi.com/?t={english_title}&apikey={OMDB_API_KEY}'
     try:
         response = requests.get(url)
         data = response.json()
@@ -27,7 +43,9 @@ def search_movie(title):
 
 # Функция для поиска списка фильмов
 def search_movies_list(query):
-    url = f'http://www.omdbapi.com/?s={query}&apikey={OMDB_API_KEY}'
+    # Переводим запрос на английский если нужно
+    english_query = translate_to_english(query)
+    url = f'http://www.omdbapi.com/?s={english_query}&apikey={OMDB_API_KEY}'
     try:
         response = requests.get(url)
         data = response.json()
@@ -42,7 +60,7 @@ def search_movies_list(query):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         '🎬 Привет! Я бот для поиска информации о фильмах.\n\n'
-        'Просто отправь мне название фильма, и я найду информацию о нём!\n\n'
+        'Просто отправь мне название фильма на русском или английском, и я найду информацию о нём!\n\n'
         'Команды:\n'
         '/start - показать это сообщение\n'
         '/help - помощь'
@@ -52,13 +70,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         '📖 Как пользоваться:\n\n'
-        '1. Отправьте название фильма\n'
+        '1. Отправьте название фильма на русском или английском\n'
         '2. Если найдено несколько фильмов, выберите нужный из списка\n'
         '3. Получите полную информацию о фильме\n\n'
         'Примеры:\n'
         '• Inception\n'
         '• Матрица\n'
-        '• Interstellar'
+        '• Начало\n'
+        '• Interstellar\n'
+        '• Интерстеллар'
     )
 
 # Форматирование информации о фильме
@@ -87,7 +107,12 @@ def format_movie_info(movie):
 # Обработка текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
-    await update.message.reply_text('🔍 Ищу фильм...')
+    
+    # Показываем разные сообщения в зависимости от языка
+    if any('\u0400' <= char <= '\u04FF' for char in query):
+        await update.message.reply_text('🔍 Ищу фильм... (перевожу на английский)')
+    else:
+        await update.message.reply_text('🔍 Ищу фильм...')
     
     # Сначала пробуем точный поиск
     movie = search_movie(query)
@@ -124,7 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(
                 '😔 К сожалению, фильм не найден.\n'
-                'Попробуйте изменить запрос или использовать английское название.'
+                'Попробуйте изменить запрос или проверить правильность названия.'
             )
 
 # Обработка нажатий на кнопки
@@ -170,7 +195,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Запускаем бота
-    logger.info("Бот запущен!")
+    logger.info("Бот запущен с поддержкой русского языка!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
