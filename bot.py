@@ -3,39 +3,28 @@ import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import requests
-from deep_translator import GoogleTranslator
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# API ключи из переменных окружения
+# API ключи
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8305087339:AAGHOIGKPC9DjAkxfEQEIsXblXOE0xG0IDU')
-OMDB_API_KEY = os.environ.get('OMDB_API_KEY', 'd6e8cba2')
+KINOPOISK_API_URL = 'https://api.kinopoisk.dev/v1.4'
 
-# Функция для определения языка и перевода
-def translate_to_english(text):
-    try:
-        # Проверяем, есть ли русские буквы
-        if any('\u0400' <= char <= '\u04FF' for char in text):
-            translated = GoogleTranslator(source='ru', target='en').translate(text)
-            logger.info(f"Перевод: '{text}' -> '{translated}'")
-            return translated
-        return text
-    except Exception as e:
-        logger.error(f"Ошибка перевода: {e}")
-        return text
-
-# Функция для поиска фильма
+# Функция для поиска фильма по названию
 def search_movie(title):
-    # Переводим название на английский если нужно
-    english_title = translate_to_english(title)
-    url = f'http://www.omdbapi.com/?t={english_title}&apikey={OMDB_API_KEY}'
+    url = f'{KINOPOISK_API_URL}/movie/search'
+    params = {
+        'page': 1,
+        'limit': 1,
+        'query': title
+    }
     try:
-        response = requests.get(url)
+        response = requests.get(url, params=params)
         data = response.json()
-        if data.get('Response') == 'True':
-            return data
+        if data.get('docs') and len(data['docs']) > 0:
+            return data['docs'][0]
         return None
     except Exception as e:
         logger.error(f"Ошибка при запросе к API: {e}")
@@ -43,23 +32,37 @@ def search_movie(title):
 
 # Функция для поиска списка фильмов
 def search_movies_list(query):
-    # Переводим запрос на английский если нужно
-    english_query = translate_to_english(query)
-    url = f'http://www.omdbapi.com/?s={english_query}&apikey={OMDB_API_KEY}'
+    url = f'{KINOPOISK_API_URL}/movie/search'
+    params = {
+        'page': 1,
+        'limit': 10,
+        'query': query
+    }
     try:
-        response = requests.get(url)
+        response = requests.get(url, params=params)
         data = response.json()
-        if data.get('Response') == 'True':
-            return data.get('Search', [])
+        if data.get('docs'):
+            return data['docs']
         return []
     except Exception as e:
         logger.error(f"Ошибка при запросе к API: {e}")
         return []
 
+# Функция для получения фильма по ID
+def get_movie_by_id(movie_id):
+    url = f'{KINOPOISK_API_URL}/movie/{movie_id}'
+    try:
+        response = requests.get(url)
+        data = response.json()
+        return data
+    except Exception as e:
+        logger.error(f"Ошибка при запросе к API: {e}")
+        return None
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        '🎬 Привет! Я бот для поиска информации о фильмах.\n\n'
+        '🎬 Привет! Я бот для поиска информации о фильмах и сериалах.\n\n'
         'Просто отправь мне название фильма на русском или английском, и я найду информацию о нём!\n\n'
         'Команды:\n'
         '/start - показать это сообщение\n'
@@ -70,118 +73,149 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         '📖 Как пользоваться:\n\n'
-        '1. Отправьте название фильма на русском или английском\n'
+        '1. Отправьте название фильма или сериала на русском или английском\n'
         '2. Если найдено несколько фильмов, выберите нужный из списка\n'
         '3. Получите полную информацию о фильме\n\n'
         'Примеры:\n'
-        '• Inception\n'
         '• Матрица\n'
         '• Начало\n'
-        '• Interstellar\n'
-        '• Интерстеллар'
+        '• Интерстеллар\n'
+        '• Во все тяжкие\n'
+        '• Игра престолов'
     )
 
 # Форматирование информации о фильме
 def format_movie_info(movie):
-    info = f"🎬 <b>{movie.get('Title', 'N/A')}</b> ({movie.get('Year', 'N/A')})\n\n"
+    # Название
+    name = movie.get('name') or movie.get('alternativeName') or 'N/A'
+    year = movie.get('year', 'N/A')
     
-    if movie.get('Plot') != 'N/A':
-        info += f"📝 <b>Описание:</b>\n{movie.get('Plot')}\n\n"
+    info = f"🎬 <b>{name}</b> ({year})\n\n"
     
-    info += f"⭐ <b>Рейтинг:</b> {movie.get('imdbRating', 'N/A')}/10\n"
-    info += f"🎭 <b>Жанр:</b> {movie.get('Genre', 'N/A')}\n"
-    info += f"🎬 <b>Режиссёр:</b> {movie.get('Director', 'N/A')}\n"
-    info += f"🎭 <b>Актёры:</b> {movie.get('Actors', 'N/A')}\n"
-    info += f"⏱ <b>Длительность:</b> {movie.get('Runtime', 'N/A')}\n"
-    info += f"🌍 <b>Страна:</b> {movie.get('Country', 'N/A')}\n"
-    info += f"🗣 <b>Язык:</b> {movie.get('Language', 'N/A')}\n"
+    # Альтернативное название
+    alt_name = movie.get('alternativeName')
+    if alt_name and alt_name != name:
+        info += f"🔤 <b>Оригинальное название:</b> {alt_name}\n\n"
     
-    if movie.get('Awards') != 'N/A':
-        info += f"🏆 <b>Награды:</b> {movie.get('Awards')}\n"
+    # Описание
+    description = movie.get('description') or movie.get('shortDescription')
+    if description:
+        info += f"📝 <b>Описание:</b>\n{description}\n\n"
     
-    if movie.get('BoxOffice') != 'N/A':
-        info += f"💰 <b>Кассовые сборы:</b> {movie.get('BoxOffice')}\n"
+    # Рейтинги
+    rating_kp = movie.get('rating', {}).get('kp')
+    rating_imdb = movie.get('rating', {}).get('imdb')
+    if rating_kp:
+        info += f"⭐ <b>Рейтинг Кинопоиск:</b> {rating_kp}/10\n"
+    if rating_imdb:
+        info += f"⭐ <b>Рейтинг IMDb:</b> {rating_imdb}/10\n"
+    
+    # Жанры
+    genres = movie.get('genres', [])
+    if genres:
+        genre_names = ', '.join([g.get('name', '') for g in genres if g.get('name')])
+        if genre_names:
+            info += f"🎭 <b>Жанр:</b> {genre_names}\n"
+    
+    # Страны
+    countries = movie.get('countries', [])
+    if countries:
+        country_names = ', '.join([c.get('name', '') for c in countries if c.get('name')])
+        if country_names:
+            info += f"🌍 <b>Страна:</b> {country_names}\n"
+    
+    # Длительность
+    movie_length = movie.get('movieLength')
+    if movie_length:
+        info += f"⏱ <b>Длительность:</b> {movie_length} мин\n"
+    
+    # Возрастной рейтинг
+    age_rating = movie.get('ageRating')
+    if age_rating:
+        info += f"🔞 <b>Возраст:</b> {age_rating}+\n"
+    
+    # Премьера
+    premiere = movie.get('premiere', {}).get('world')
+    if premiere:
+        info += f"📅 <b>Премьера:</b> {premiere}\n"
     
     return info
 
 # Обработка текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
+    await update.message.reply_text('🔍 Ищу фильм на Кинопоиске...')
     
-    # Показываем разные сообщения в зависимости от языка
-    if any('\u0400' <= char <= '\u04FF' for char in query):
-        await update.message.reply_text('🔍 Ищу фильм... (перевожу на английский)')
-    else:
-        await update.message.reply_text('🔍 Ищу фильм...')
+    # Ищем список фильмов
+    movies = search_movies_list(query)
     
-    # Сначала пробуем точный поиск
-    movie = search_movie(query)
-    
-    if movie:
-        # Нашли точное совпадение
-        poster_url = movie.get('Poster')
+    if len(movies) == 1:
+        # Нашли один фильм - показываем сразу
+        movie = movies[0]
+        poster_url = movie.get('poster', {}).get('url')
         info = format_movie_info(movie)
         
-        if poster_url and poster_url != 'N/A':
-            await update.message.reply_photo(
-                photo=poster_url,
-                caption=info,
-                parse_mode='HTML'
-            )
+        if poster_url:
+            try:
+                await update.message.reply_photo(
+                    photo=poster_url,
+                    caption=info,
+                    parse_mode='HTML'
+                )
+            except:
+                await update.message.reply_text(info, parse_mode='HTML')
         else:
             await update.message.reply_text(info, parse_mode='HTML')
-    else:
-        # Ищем список фильмов
-        movies = search_movies_list(query)
-        
-        if movies:
-            keyboard = []
-            for movie in movies[:10]:  # Показываем первые 10 результатов
-                button_text = f"{movie.get('Title')} ({movie.get('Year')})"
-                callback_data = f"movie_{movie.get('imdbID')}"
-                keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+    elif len(movies) > 1:
+        # Нашли несколько - показываем список
+        keyboard = []
+        for movie in movies[:10]:
+            name = movie.get('name') or movie.get('alternativeName') or 'Неизвестно'
+            year = movie.get('year', '')
+            movie_id = movie.get('id')
             
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                '🎬 Найдено несколько фильмов. Выберите нужный:',
-                reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(
-                '😔 К сожалению, фильм не найден.\n'
-                'Попробуйте изменить запрос или проверить правильность названия.'
-            )
+            button_text = f"{name} ({year})" if year else name
+            callback_data = f"movie_{movie_id}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            '🎬 Найдено несколько фильмов. Выберите нужный:',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            '😔 К сожалению, фильм не найден.\n'
+            'Попробуйте изменить запрос или проверить правильность названия.'
+        )
 
 # Обработка нажатий на кнопки
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    imdb_id = query.data.replace('movie_', '')
+    movie_id = query.data.replace('movie_', '')
     
-    # Получаем информацию по IMDb ID
-    url = f'http://www.omdbapi.com/?i={imdb_id}&apikey={OMDB_API_KEY}'
-    try:
-        response = requests.get(url)
-        movie = response.json()
+    # Получаем полную информацию о фильме
+    movie = get_movie_by_id(movie_id)
+    
+    if movie:
+        poster_url = movie.get('poster', {}).get('url')
+        info = format_movie_info(movie)
         
-        if movie.get('Response') == 'True':
-            poster_url = movie.get('Poster')
-            info = format_movie_info(movie)
-            
-            if poster_url and poster_url != 'N/A':
+        if poster_url:
+            try:
                 await query.message.reply_photo(
                     photo=poster_url,
                     caption=info,
                     parse_mode='HTML'
                 )
-            else:
+            except:
                 await query.message.reply_text(info, parse_mode='HTML')
         else:
-            await query.message.reply_text('Ошибка при получении информации о фильме.')
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await query.message.reply_text('Произошла ошибка. Попробуйте позже.')
+            await query.message.reply_text(info, parse_mode='HTML')
+    else:
+        await query.message.reply_text('Ошибка при получении информации о фильме.')
 
 # Главная функция
 def main():
@@ -195,7 +229,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Запускаем бота
-    logger.info("Бот запущен с поддержкой русского языка!")
+    logger.info("Бот запущен с Кинопоиском API!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
