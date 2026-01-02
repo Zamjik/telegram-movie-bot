@@ -109,6 +109,18 @@ def format_movie_info(movie):
     
     info += "\n"
     
+    # ID фильмов
+    kinopoisk_id = movie.get('kinopoiskId')
+    imdb_id = movie.get('imdbId')
+    
+    if kinopoisk_id or imdb_id:
+        info += "🆔 <b>Идентификаторы:</b>\n"
+        if kinopoisk_id:
+            info += f"  • Kinopoisk ID: <code>{kinopoisk_id}</code>\n"
+        if imdb_id:
+            info += f"  • IMDb ID: <code>{imdb_id}</code>\n"
+        info += "\n"
+    
     # Описание
     description = movie.get('description')
     if description:
@@ -162,13 +174,13 @@ def format_movie_info(movie):
 # Обработка текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text
-    await update.message.reply_text('🔍 Ищу на Кинопоиске...')
+    search_msg = await update.message.reply_text('🔍 Ищу на Кинопоиске...')
     
     # Ищем список фильмов
     movies = search_movies_list(query)
     
     if len(movies) == 0:
-        await update.message.reply_text(
+        await search_msg.edit_text(
             '😔 К сожалению, ничего не найдено.\n'
             'Попробуйте изменить запрос или проверить правильность названия.'
         )
@@ -189,6 +201,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if trailer_url:
                 keyboard = [[InlineKeyboardButton("🎬 Смотреть трейлер", url=trailer_url)]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Удаляем сообщение о поиске
+            await search_msg.delete()
             
             if poster_url:
                 try:
@@ -215,7 +230,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
+        await search_msg.edit_text(
             '🎬 Найдено несколько фильмов. Выберите нужный:',
             reply_markup=reply_markup
         )
@@ -242,6 +257,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if trailer_url:
             keyboard = [[InlineKeyboardButton("🎬 Смотреть трейлер", url=trailer_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Удаляем сообщение со списком фильмов
+        try:
+            await query.message.delete()
+        except Exception as e:
+            logger.error(f"Не удалось удалить сообщение: {e}")
         
         if poster_url:
             try:
