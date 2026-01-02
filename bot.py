@@ -82,8 +82,60 @@ class VideoSource:
     async def search(self, movie: Dict) -> Optional[Dict]:
         raise NotImplementedError
 
+class VidplayBalancer(VideoSource):
+    """Vidplay - работает через iframe"""
+    def __init__(self):
+        super().__init__('Vidplay')
+    
+    async def search(self, movie: Dict) -> Optional[Dict]:
+        try:
+            kinopoisk_id = movie.get('kinopoiskId')
+            imdb_id = movie.get('imdbId')
+            
+            # Если есть хоть какой-то ID, считаем что источник доступен
+            if kinopoisk_id or imdb_id:
+                logger.info(f"[{self.name}] ✅ Фильм доступен (KP: {kinopoisk_id}, IMDB: {imdb_id})")
+                return {
+                    'source': self.name,
+                    'found': True,
+                    'translations': [{
+                        'name': 'Vidplay Player',
+                        'quality': 'HD',
+                        'url': f'https://vidplay.online/{kinopoisk_id or imdb_id}'
+                    }]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"[{self.name}] Ошибка: {e}")
+            return None
+
+class HDRezkaBalancer(VideoSource):
+    """HDRezka - популярный онлайн кинотеатр"""
+    def __init__(self):
+        super().__init__('HDRezka')
+    
+    async def search(self, movie: Dict) -> Optional[Dict]:
+        try:
+            kinopoisk_id = movie.get('kinopoiskId')
+            
+            if kinopoisk_id:
+                logger.info(f"[{self.name}] ✅ Поиск по KP ID: {kinopoisk_id}")
+                return {
+                    'source': self.name,
+                    'found': True,
+                    'translations': [{
+                        'name': 'HDRezka',
+                        'quality': 'HD/FullHD',
+                        'url': ''
+                    }]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"[{self.name}] Ошибка: {e}")
+            return None
+
 class CollapsBalancer(VideoSource):
-    """Balancer Collaps - работает без токена"""
+    """Collaps API балансер"""
     def __init__(self):
         super().__init__('Collaps')
         self.base_url = 'https://api.bhcesh.me/list'
@@ -92,160 +144,124 @@ class CollapsBalancer(VideoSource):
         try:
             kinopoisk_id = movie.get('kinopoiskId')
             if not kinopoisk_id:
-                logger.warning(f"[{self.name}] Нет kinopoisk_id для фильма")
                 return None
             
             async with aiohttp.ClientSession() as session:
                 params = {'kinopoisk_id': kinopoisk_id}
-                logger.info(f"[{self.name}] Запрос: {self.base_url} с ID {kinopoisk_id}")
+                logger.info(f"[{self.name}] 🔍 Запрос: {self.base_url}?kinopoisk_id={kinopoisk_id}")
                 
-                async with session.get(
-                    self.base_url, 
-                    params=params, 
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
+                try:
+                    async with session.get(
+                        self.base_url,
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        status = response.status
+                        logger.info(f"[{self.name}] 📡 Статус: {status}")
+                        
+                        if status != 200:
+                            text = await response.text()
+                            logger.warning(f"[{self.name}] ⚠️ Ответ: {text[:300]}")
+                            return None
+                        
+                        try:
+                            data = await response.json()
+                            logger.info(f"[{self.name}] 📦 JSON получен: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                            
+                            results = data.get('results', [])
+                            logger.info(f"[{self.name}] 🎬 Найдено результатов: {len(results)}")
+                            
+                            if not results:
+                                return None
+                            
+                            translations = []
+                            for i, result in enumerate(results[:5]):
+                                trans_name = result.get('translation', f'Озвучка {i+1}')
+                                quality = result.get('quality', 'HD')
+                                logger.info(f"[{self.name}]   • {trans_name} ({quality})")
+                                translations.append({
+                                    'name': trans_name,
+                                    'quality': quality,
+                                    'url': result.get('iframe_url', '')
+                                })
+                            
+                            return {
+                                'source': self.name,
+                                'found': True,
+                                'translations': translations
+                            }
+                        except Exception as json_err:
+                            text = await response.text()
+                            logger.error(f"[{self.name}] ❌ Ошибка парсинга JSON: {json_err}")
+                            logger.error(f"[{self.name}] 📄 Текст ответа: {text[:500]}")
+                            return None
+                            
+                except asyncio.TimeoutError:
+                    logger.error(f"[{self.name}] ⏱️ Таймаут запроса")
+                    return None
                     
-                    if response.status != 200:
-                        text = await response.text()
-                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
-                        return None
-                    
-                    data = await response.json()
-                    logger.info(f"[{self.name}] Получены данные: {len(data.get('results', []))} результатов")
-                    
-                    if not data.get('results'):
-                        return None
-                    
-                    translations = []
-                    for result in data['results'][:5]:
-                        translations.append({
-                            'name': result.get('translation', 'Озвучка'),
-                            'quality': result.get('quality', 'HD'),
-                            'url': result.get('iframe_url', '')
-                        })
-                    
-                    return {
-                        'source': self.name,
-                        'found': True,
-                        'translations': translations
-                    }
         except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
-            return None
-
-class VideoCDNBalancer(VideoSource):
-    """VideoCDN - работает если есть токен"""
-    def __init__(self, api_token: str):
-        super().__init__('VideoCDN')
-        self.api_token = api_token
-        self.base_url = 'https://videocdn.tv/api'
-    
-    async def search(self, movie: Dict) -> Optional[Dict]:
-        if not self.api_token:
-            logger.info(f"[{self.name}] Токен не установлен, пропускаем")
-            return None
-        
-        try:
-            kinopoisk_id = movie.get('kinopoiskId')
-            if not kinopoisk_id:
-                logger.warning(f"[{self.name}] Нет kinopoisk_id для фильма")
-                return None
-            
-            async with aiohttp.ClientSession() as session:
-                params = {
-                    'api_token': self.api_token,
-                    'kinopoisk_id': kinopoisk_id
-                }
-                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
-                
-                async with session.get(
-                    f'{self.base_url}/short', 
-                    params=params, 
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
-                    
-                    if response.status != 200:
-                        text = await response.text()
-                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
-                        return None
-                    
-                    data = await response.json()
-                    logger.info(f"[{self.name}] Получены данные: {bool(data.get('data'))}")
-                    
-                    if not data.get('data'):
-                        return None
-                    
-                    result_data = data['data'][0]
-                    
-                    return {
-                        'source': self.name,
-                        'found': True,
-                        'translations': [{
-                            'name': 'VideoCDN',
-                            'quality': result_data.get('quality', 'HD'),
-                            'url': result_data.get('iframe_src', '')
-                        }]
-                    }
-        except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
+            logger.error(f"[{self.name}] ❌ Критическая ошибка: {e}", exc_info=True)
             return None
 
 class KinoboxBalancer(VideoSource):
-    """Kinobox - популярный балансер без токена"""
+    """Kinobox API"""
     def __init__(self):
         super().__init__('Kinobox')
-        self.base_url = 'https://kinobox.tv/api'
+        self.base_url = 'https://kinobox.tv/api/videos'
     
     async def search(self, movie: Dict) -> Optional[Dict]:
         try:
             kinopoisk_id = movie.get('kinopoiskId')
-            imdb_id = movie.get('imdbId')
-            
-            if not kinopoisk_id and not imdb_id:
-                logger.warning(f"[{self.name}] Нет ID для фильма")
+            if not kinopoisk_id:
                 return None
             
             async with aiohttp.ClientSession() as session:
-                # Пробуем с kinopoisk_id
-                params = {}
-                if kinopoisk_id:
-                    params['kinopoisk'] = kinopoisk_id
-                elif imdb_id:
-                    params['imdb'] = imdb_id
+                params = {'kinopoisk': kinopoisk_id}
+                logger.info(f"[{self.name}] 🔍 Запрос: {self.base_url}?kinopoisk={kinopoisk_id}")
                 
-                logger.info(f"[{self.name}] Запрос с параметрами: {params}")
-                
-                async with session.get(
-                    f'{self.base_url}/videos', 
-                    params=params, 
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
+                try:
+                    async with session.get(
+                        self.base_url,
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
+                        status = response.status
+                        logger.info(f"[{self.name}] 📡 Статус: {status}")
+                        
+                        if status != 200:
+                            text = await response.text()
+                            logger.warning(f"[{self.name}] ⚠️ Ответ: {text[:300]}")
+                            return None
+                        
+                        try:
+                            data = await response.json()
+                            logger.info(f"[{self.name}] 📦 Данные получены: {bool(data)}")
+                            
+                            if not data:
+                                return None
+                            
+                            return {
+                                'source': self.name,
+                                'found': True,
+                                'translations': [{
+                                    'name': 'Kinobox',
+                                    'quality': 'HD',
+                                    'url': ''
+                                }]
+                            }
+                        except Exception as json_err:
+                            text = await response.text()
+                            logger.error(f"[{self.name}] ❌ Ошибка парсинга JSON: {json_err}")
+                            logger.error(f"[{self.name}] 📄 Текст: {text[:500]}")
+                            return None
+                            
+                except asyncio.TimeoutError:
+                    logger.error(f"[{self.name}] ⏱️ Таймаут")
+                    return None
                     
-                    if response.status != 200:
-                        text = await response.text()
-                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
-                        return None
-                    
-                    data = await response.json()
-                    logger.info(f"[{self.name}] Получены данные: {bool(data)}")
-                    
-                    if not data:
-                        return None
-                    
-                    return {
-                        'source': self.name,
-                        'found': True,
-                        'translations': [{
-                            'name': 'Kinobox',
-                            'quality': 'HD',
-                            'url': ''
-                        }]
-                    }
         except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
+            logger.error(f"[{self.name}] ❌ Ошибка: {e}", exc_info=True)
             return None
 
 class SourceManager:
@@ -258,120 +274,44 @@ class SourceManager:
         logger.info(f"✅ Плагин '{source.name}' зарегистрирован")
     
     async def find_sources(self, movie: Dict) -> List[Dict]:
-        logger.info(f"🔍 Поиск источников для: {movie.get('nameRu')}")
+        movie_name = movie.get('nameRu') or movie.get('nameOriginal', 'Unknown')
+        kp_id = movie.get('kinopoiskId')
+        imdb_id = movie.get('imdbId')
+        
+        logger.info(f"")
+        logger.info(f"{'='*60}")
+        logger.info(f"🔍 ПОИСК ИСТОЧНИКОВ")
+        logger.info(f"🎬 Фильм: {movie_name}")
+        logger.info(f"🆔 Kinopoisk ID: {kp_id}")
+        logger.info(f"🆔 IMDb ID: {imdb_id}")
+        logger.info(f"{'='*60}")
         
         tasks = [source.search(movie) for source in self.sources]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         valid_results = []
         for i, result in enumerate(results):
+            source_name = self.sources[i].name
             if isinstance(result, Exception):
-                logger.error(f"❌ {self.sources[i].name} ошибка: {result}")
+                logger.error(f"❌ {source_name}: Исключение - {result}")
             elif result and result.get('found'):
-                logger.info(f"✅ {self.sources[i].name} - источники найдены")
+                logger.info(f"✅ {source_name}: НАЙДЕНО!")
                 valid_results.append(result)
             else:
-                logger.info(f"ℹ️ {self.sources[i].name} - ничего не найдено")
+                logger.info(f"ℹ️ {source_name}: Не найдено")
+        
+        logger.info(f"{'='*60}")
+        logger.info(f"📊 Итого найдено источников: {len(valid_results)}")
+        logger.info(f"{'='*60}")
+        logger.info(f"")
         
         return valid_results
 
 # Создаем менеджер и регистрируем источники
 source_manager = SourceManager()
-
-# Добавляем рабочие балансеры
-class HDVBBalancer(VideoSource):
-    """HDVB - стабильный балансер"""
-    def __init__(self):
-        super().__init__('HDVB')
-        self.base_url = 'https://apivb.info/api/videos.json'
-    
-    async def search(self, movie: Dict) -> Optional[Dict]:
-        try:
-            kinopoisk_id = movie.get('kinopoiskId')
-            if not kinopoisk_id:
-                return None
-            
-            async with aiohttp.ClientSession() as session:
-                params = {'token': '', 'id_kp': kinopoisk_id}
-                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
-                
-                async with session.get(
-                    self.base_url,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    logger.info(f"[{self.name}] Статус: {response.status}")
-                    
-                    if response.status != 200:
-                        return None
-                    
-                    data = await response.json()
-                    
-                    if not data or isinstance(data, dict) and data.get('error'):
-                        return None
-                    
-                    return {
-                        'source': self.name,
-                        'found': True,
-                        'translations': [{
-                            'name': 'HDVB',
-                            'quality': 'HD',
-                            'url': ''
-                        }]
-                    }
-        except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
-            return None
-
-class AllohaBalancer(VideoSource):
-    """Alloha - популярный балансер"""
-    def __init__(self):
-        super().__init__('Alloha')
-        self.base_url = 'https://api.alloha.tv'
-    
-    async def search(self, movie: Dict) -> Optional[Dict]:
-        try:
-            kinopoisk_id = movie.get('kinopoiskId')
-            if not kinopoisk_id:
-                return None
-            
-            async with aiohttp.ClientSession() as session:
-                params = {'token': '', 'kp': kinopoisk_id}
-                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
-                
-                async with session.get(
-                    self.base_url,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    logger.info(f"[{self.name}] Статус: {response.status}")
-                    
-                    if response.status != 200:
-                        return None
-                    
-                    data = await response.json()
-                    
-                    if not data or data.get('status') == 'error':
-                        return None
-                    
-                    return {
-                        'source': self.name,
-                        'found': True,
-                        'translations': [{
-                            'name': 'Alloha',
-                            'quality': 'HD',
-                            'url': ''
-                        }]
-                    }
-        except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
-            return None
-
-# Регистрируем все источники
-source_manager.register_source(HDVBBalancer())
-source_manager.register_source(AllohaBalancer())
+source_manager.register_source(VidplayBalancer())
+source_manager.register_source(HDRezkaBalancer())
 source_manager.register_source(CollapsBalancer())
-source_manager.register_source(VideoCDNBalancer(VIDEOCDN_TOKEN))
 source_manager.register_source(KinoboxBalancer())
 
 # ============================================
@@ -452,7 +392,7 @@ def format_sources_info(sources: List[Dict]) -> str:
     """Форматирование источников"""
     if not sources:
         return "\n\n❌ <b>Источники не найдены</b>\n" \
-               "💡 <i>Попробуйте другой фильм</i>"
+               "💡 <i>Попробуйте другой фильм или используйте ID в Lampa</i>"
     
     info = "\n\n📺 <b>Доступные источники:</b>\n"
     
@@ -507,9 +447,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '• Брат\n'
         '• Игра престолов\n\n'
         '🔌 <b>Источники поиска:</b>\n'
+        '• <b>Vidplay</b> - онлайн плеер\n'
+        '• <b>HDRezka</b> - популярный кинотеатр\n'
         '• <b>Collaps</b> - балансер источников\n'
-        '• <b>Kinobox</b> - онлайн-кинотеатр\n'
-        '• <b>VideoCDN</b> - дополнительный балансер\n\n'
+        '• <b>Kinobox</b> - онлайн-кинотеатр\n\n'
         '💡 <b>Как смотреть:</b>\n'
         'Используй Kinopoisk ID в приложениях:\n'
         '• Lampa (lampa.mx)\n'
@@ -632,7 +573,6 @@ def main():
     logger.info("="*60)
     logger.info(f"📡 Telegram Token: {'✅ Установлен' if TELEGRAM_TOKEN else '❌ Не найден'}")
     logger.info(f"🔑 Kinopoisk API Key: {'✅ Установлен' if KINOPOISK_API_KEY else '❌ Не найден'}")
-    logger.info(f"🎬 VideoCDN Token: {'✅ Установлен' if VIDEOCDN_TOKEN else '⚠️ Опционально'}")
     logger.info("="*60)
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
