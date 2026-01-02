@@ -92,19 +92,28 @@ class CollapsBalancer(VideoSource):
         try:
             kinopoisk_id = movie.get('kinopoiskId')
             if not kinopoisk_id:
+                logger.warning(f"[{self.name}] Нет kinopoisk_id для фильма")
                 return None
             
             async with aiohttp.ClientSession() as session:
                 params = {'kinopoisk_id': kinopoisk_id}
+                logger.info(f"[{self.name}] Запрос: {self.base_url} с ID {kinopoisk_id}")
+                
                 async with session.get(
                     self.base_url, 
                     params=params, 
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
+                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
+                    
                     if response.status != 200:
+                        text = await response.text()
+                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
                         return None
                     
                     data = await response.json()
+                    logger.info(f"[{self.name}] Получены данные: {len(data.get('results', []))} результатов")
+                    
                     if not data.get('results'):
                         return None
                     
@@ -122,7 +131,7 @@ class CollapsBalancer(VideoSource):
                         'translations': translations
                     }
         except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}")
+            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
             return None
 
 class VideoCDNBalancer(VideoSource):
@@ -134,11 +143,13 @@ class VideoCDNBalancer(VideoSource):
     
     async def search(self, movie: Dict) -> Optional[Dict]:
         if not self.api_token:
+            logger.info(f"[{self.name}] Токен не установлен, пропускаем")
             return None
         
         try:
             kinopoisk_id = movie.get('kinopoiskId')
             if not kinopoisk_id:
+                logger.warning(f"[{self.name}] Нет kinopoisk_id для фильма")
                 return None
             
             async with aiohttp.ClientSession() as session:
@@ -146,15 +157,23 @@ class VideoCDNBalancer(VideoSource):
                     'api_token': self.api_token,
                     'kinopoisk_id': kinopoisk_id
                 }
+                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
+                
                 async with session.get(
                     f'{self.base_url}/short', 
                     params=params, 
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
+                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
+                    
                     if response.status != 200:
+                        text = await response.text()
+                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
                         return None
                     
                     data = await response.json()
+                    logger.info(f"[{self.name}] Получены данные: {bool(data.get('data'))}")
+                    
                     if not data.get('data'):
                         return None
                     
@@ -170,7 +189,7 @@ class VideoCDNBalancer(VideoSource):
                         }]
                     }
         except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}")
+            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
             return None
 
 class KinoboxBalancer(VideoSource):
@@ -182,20 +201,37 @@ class KinoboxBalancer(VideoSource):
     async def search(self, movie: Dict) -> Optional[Dict]:
         try:
             kinopoisk_id = movie.get('kinopoiskId')
-            if not kinopoisk_id:
+            imdb_id = movie.get('imdbId')
+            
+            if not kinopoisk_id and not imdb_id:
+                logger.warning(f"[{self.name}] Нет ID для фильма")
                 return None
             
             async with aiohttp.ClientSession() as session:
-                params = {'kinopoisk': kinopoisk_id}
+                # Пробуем с kinopoisk_id
+                params = {}
+                if kinopoisk_id:
+                    params['kinopoisk'] = kinopoisk_id
+                elif imdb_id:
+                    params['imdb'] = imdb_id
+                
+                logger.info(f"[{self.name}] Запрос с параметрами: {params}")
+                
                 async with session.get(
                     f'{self.base_url}/videos', 
                     params=params, 
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
+                    logger.info(f"[{self.name}] Статус ответа: {response.status}")
+                    
                     if response.status != 200:
+                        text = await response.text()
+                        logger.warning(f"[{self.name}] Ответ: {text[:200]}")
                         return None
                     
                     data = await response.json()
+                    logger.info(f"[{self.name}] Получены данные: {bool(data)}")
+                    
                     if not data:
                         return None
                     
@@ -209,7 +245,7 @@ class KinoboxBalancer(VideoSource):
                         }]
                     }
         except Exception as e:
-            logger.error(f"[{self.name}] Ошибка: {e}")
+            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
             return None
 
 class SourceManager:
@@ -241,6 +277,99 @@ class SourceManager:
 
 # Создаем менеджер и регистрируем источники
 source_manager = SourceManager()
+
+# Добавляем рабочие балансеры
+class HDVBBalancer(VideoSource):
+    """HDVB - стабильный балансер"""
+    def __init__(self):
+        super().__init__('HDVB')
+        self.base_url = 'https://apivb.info/api/videos.json'
+    
+    async def search(self, movie: Dict) -> Optional[Dict]:
+        try:
+            kinopoisk_id = movie.get('kinopoiskId')
+            if not kinopoisk_id:
+                return None
+            
+            async with aiohttp.ClientSession() as session:
+                params = {'token': '', 'id_kp': kinopoisk_id}
+                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
+                
+                async with session.get(
+                    self.base_url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    logger.info(f"[{self.name}] Статус: {response.status}")
+                    
+                    if response.status != 200:
+                        return None
+                    
+                    data = await response.json()
+                    
+                    if not data or isinstance(data, dict) and data.get('error'):
+                        return None
+                    
+                    return {
+                        'source': self.name,
+                        'found': True,
+                        'translations': [{
+                            'name': 'HDVB',
+                            'quality': 'HD',
+                            'url': ''
+                        }]
+                    }
+        except Exception as e:
+            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
+            return None
+
+class AllohaBalancer(VideoSource):
+    """Alloha - популярный балансер"""
+    def __init__(self):
+        super().__init__('Alloha')
+        self.base_url = 'https://api.alloha.tv'
+    
+    async def search(self, movie: Dict) -> Optional[Dict]:
+        try:
+            kinopoisk_id = movie.get('kinopoiskId')
+            if not kinopoisk_id:
+                return None
+            
+            async with aiohttp.ClientSession() as session:
+                params = {'token': '', 'kp': kinopoisk_id}
+                logger.info(f"[{self.name}] Запрос с ID {kinopoisk_id}")
+                
+                async with session.get(
+                    self.base_url,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    logger.info(f"[{self.name}] Статус: {response.status}")
+                    
+                    if response.status != 200:
+                        return None
+                    
+                    data = await response.json()
+                    
+                    if not data or data.get('status') == 'error':
+                        return None
+                    
+                    return {
+                        'source': self.name,
+                        'found': True,
+                        'translations': [{
+                            'name': 'Alloha',
+                            'quality': 'HD',
+                            'url': ''
+                        }]
+                    }
+        except Exception as e:
+            logger.error(f"[{self.name}] Ошибка: {e}", exc_info=True)
+            return None
+
+# Регистрируем все источники
+source_manager.register_source(HDVBBalancer())
+source_manager.register_source(AllohaBalancer())
 source_manager.register_source(CollapsBalancer())
 source_manager.register_source(VideoCDNBalancer(VIDEOCDN_TOKEN))
 source_manager.register_source(KinoboxBalancer())
