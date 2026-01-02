@@ -11,19 +11,17 @@ from typing import List, Dict, Optional
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# API ключи (встроены напрямую для простоты)
+# API ключи
 TELEGRAM_TOKEN = '8305087339:AAGHOIGKPC9DjAkxfEQEIsXblXOE0xG0IDU'
 KINOPOISK_API_KEY = '3efe014f-4341-40be-961a-043dadad865e'
 KINOPOISK_API_URL = 'https://kinopoiskapiunofficial.tech/api'
-
-# Опциональный токен VideoCDN (можно добавить через переменные окружения)
 VIDEOCDN_TOKEN = os.environ.get('VIDEOCDN_TOKEN', '')
 
 # ============================================
 # KINOPOISK API
 # ============================================
 
-def search_movies_list(query):
+def search_movies_list(query: str) -> List[Dict]:
     """Поиск фильмов по названию"""
     url = f'{KINOPOISK_API_URL}/v2.1/films/search-by-keyword'
     headers = {
@@ -33,13 +31,14 @@ def search_movies_list(query):
     params = {'keyword': query, 'page': 1}
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
         data = response.json()
         return data.get('films', [])
     except Exception as e:
         logger.error(f"Ошибка поиска: {e}")
         return []
 
-def get_movie_by_id(film_id):
+def get_movie_by_id(film_id: int) -> Optional[Dict]:
     """Получение информации о фильме"""
     url = f'{KINOPOISK_API_URL}/v2.2/films/{film_id}'
     headers = {
@@ -48,12 +47,13 @@ def get_movie_by_id(film_id):
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         return response.json()
     except Exception as e:
         logger.error(f"Ошибка получения фильма: {e}")
         return None
 
-def get_movie_videos(film_id):
+def get_movie_videos(film_id: int) -> Optional[str]:
     """Получение трейлеров"""
     url = f'{KINOPOISK_API_URL}/v2.2/films/{film_id}/videos'
     headers = {
@@ -62,6 +62,7 @@ def get_movie_videos(film_id):
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         data = response.json()
         trailers = [item for item in data.get('items', []) if item.get('site') == 'YOUTUBE']
         return trailers[0].get('url') if trailers else None
@@ -95,7 +96,11 @@ class CollapsBalancer(VideoSource):
             
             async with aiohttp.ClientSession() as session:
                 params = {'kinopoisk_id': kinopoisk_id}
-                async with session.get(self.base_url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(
+                    self.base_url, 
+                    params=params, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
                     if response.status != 200:
                         return None
                     
@@ -141,7 +146,11 @@ class VideoCDNBalancer(VideoSource):
                     'api_token': self.api_token,
                     'kinopoisk_id': kinopoisk_id
                 }
-                async with session.get(f'{self.base_url}/short', params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(
+                    f'{self.base_url}/short', 
+                    params=params, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
                     if response.status != 200:
                         return None
                     
@@ -178,7 +187,11 @@ class KinoboxBalancer(VideoSource):
             
             async with aiohttp.ClientSession() as session:
                 params = {'kinopoisk': kinopoisk_id}
-                async with session.get(f'{self.base_url}/videos', params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.get(
+                    f'{self.base_url}/videos', 
+                    params=params, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
                     if response.status != 200:
                         return None
                     
@@ -202,7 +215,7 @@ class KinoboxBalancer(VideoSource):
 class SourceManager:
     """Менеджер источников"""
     def __init__(self):
-        self.sources = []
+        self.sources: List[VideoSource] = []
     
     def register_source(self, source: VideoSource):
         self.sources.append(source)
@@ -249,18 +262,6 @@ def format_movie_info(movie: Dict) -> str:
     
     info += "\n"
     
-    # ID
-    kinopoisk_id = movie.get('kinopoiskId')
-    imdb_id = movie.get('imdbId')
-    
-    if kinopoisk_id or imdb_id:
-        info += "🆔 <b>ID:</b>\n"
-        if kinopoisk_id:
-            info += f"  • Kinopoisk: <code>{kinopoisk_id}</code>\n"
-        if imdb_id:
-            info += f"  • IMDb: <code>{imdb_id}</code>\n"
-        info += "\n"
-    
     # Описание
     description = movie.get('description')
     if description:
@@ -299,6 +300,17 @@ def format_movie_info(movie: Dict) -> str:
     if age_limit:
         age = age_limit.replace('age', '')
         info += f"🔞 Возраст: {age}+\n"
+    
+    # ID (перемещены вниз, перед источниками)
+    kinopoisk_id = movie.get('kinopoiskId')
+    imdb_id = movie.get('imdbId')
+    
+    if kinopoisk_id or imdb_id:
+        info += "\n🆔 <b>ID:</b>\n"
+        if kinopoisk_id:
+            info += f"  • Kinopoisk: <code>{kinopoisk_id}</code>\n"
+        if imdb_id:
+            info += f"  • IMDb: <code>{imdb_id}</code>\n"
     
     # Ссылка на Кинопоиск
     web_url = movie.get('webUrl')
@@ -384,7 +396,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     movies = search_movies_list(query)
     
-    if len(movies) == 0:
+    if not movies:
         await search_msg.edit_text(
             '😔 Ничего не найдено.\n'
             'Попробуй изменить запрос или проверить правильность названия.'
@@ -423,31 +435,18 @@ async def show_movie_details(update: Update, message, film_id: str):
     info = format_movie_info(movie)
     info += format_sources_info(sources)
     
-    # Создаем кнопки
+    # Создаем кнопки - только трейлер и IMDb
     keyboard = []
     
     # Кнопка трейлера
     if trailer_url:
         keyboard.append([InlineKeyboardButton("🎬 Трейлер на YouTube", url=trailer_url)])
     
-    # Кнопка с ссылками
-    kinopoisk_id = movie.get('kinopoiskId')
+    # Кнопка IMDb
     imdb_id = movie.get('imdbId')
-    
-    if kinopoisk_id:
-        keyboard.append([
-            InlineKeyboardButton("🔗 Кинопоиск", url=f"https://www.kinopoisk.ru/film/{kinopoisk_id}/")
-        ])
-    
     if imdb_id:
         keyboard.append([
             InlineKeyboardButton("🎬 IMDb", url=f"https://www.imdb.com/title/{imdb_id}/")
-        ])
-    
-    # Кнопка "Где смотреть"
-    if kinopoisk_id:
-        keyboard.append([
-            InlineKeyboardButton("📱 Где смотреть?", callback_data=f"watch_{film_id}")
         ])
     
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
@@ -470,7 +469,8 @@ async def show_movie_details(update: Update, message, film_id: str):
                 parse_mode='HTML', 
                 reply_markup=reply_markup
             )
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка отправки с фото: {e}")
         # Если не удалось отправить фото
         if hasattr(update, 'callback_query'):
             await update.callback_query.message.reply_text(
@@ -492,55 +492,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith('movie_'):
         film_id = query.data.replace('movie_', '')
         await show_movie_details(update, query.message, film_id)
-    
-    elif query.data.startswith('watch_'):
-        film_id = query.data.replace('watch_', '')
-        movie = get_movie_by_id(film_id)
-        
-        if movie:
-            kinopoisk_id = movie.get('kinopoiskId')
-            imdb_id = movie.get('imdbId')
-            name = movie.get('nameRu') or movie.get('nameOriginal')
-            
-            watch_info = f"📱 <b>Где смотреть '{name}':</b>\n\n"
-            
-            watch_info += "🎬 <b>Легальные платформы:</b>\n"
-            if kinopoisk_id:
-                watch_info += f"• <a href='https://hd.kinopoisk.ru/film/{kinopoisk_id}/'>Кинопоиск HD</a> (подписка)\n"
-            watch_info += "• Okko, Ivi, Premier, START\n\n"
-            
-            watch_info += "🖥 <b>Медиацентры (Lampa, Kodi):</b>\n"
-            if kinopoisk_id:
-                watch_info += f"Kinopoisk ID: <code>{kinopoisk_id}</code>\n"
-            if imdb_id:
-                watch_info += f"IMDb ID: <code>{imdb_id}</code>\n"
-            
-            watch_info += "\n💡 <b>Инструкция:</b>\n"
-            watch_info += "1. Установи Lampa с <a href='https://lampa.mx'>lampa.mx</a>\n"
-            watch_info += "2. Открой Lampa и найди фильм\n"
-            watch_info += "3. Или используй ID выше в поиске\n"
-            watch_info += "4. Выбери источник и озвучку\n\n"
-            watch_info += "📺 Lampa автоматически найдет источники для просмотра!"
-            
-            # Кнопки с прямыми ссылками
-            keyboard = []
-            keyboard.append([InlineKeyboardButton("🚀 Скачать Lampa", url="https://lampa.mx")])
-            
-            if kinopoisk_id:
-                keyboard.append([
-                    InlineKeyboardButton("📋 Скопировать Kinopoisk ID", callback_data=f"copy_kp_{kinopoisk_id}")
-                ])
-            
-            await query.message.reply_text(
-                watch_info, 
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                disable_web_page_preview=True
-            )
-    
-    elif query.data.startswith('copy_kp_'):
-        kp_id = query.data.replace('copy_kp_', '')
-        await query.answer(f"Kinopoisk ID: {kp_id} скопирован!", show_alert=True)
 
 # ============================================
 # ЗАПУСК
