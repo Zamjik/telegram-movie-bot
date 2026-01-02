@@ -82,57 +82,56 @@ class VideoSource:
     async def search(self, movie: Dict) -> Optional[Dict]:
         raise NotImplementedError
 
-class VidplayBalancer(VideoSource):
-    """Vidplay - работает через iframe"""
+class ZetflixBalancer(VideoSource):
+    """Zetflix - работающий онлайн плеер"""
     def __init__(self):
-        super().__init__('Vidplay')
-    
-    async def search(self, movie: Dict) -> Optional[Dict]:
-        try:
-            kinopoisk_id = movie.get('kinopoiskId')
-            imdb_id = movie.get('imdbId')
-            
-            # Если есть хоть какой-то ID, считаем что источник доступен
-            if kinopoisk_id or imdb_id:
-                logger.info(f"[{self.name}] ✅ Фильм доступен (KP: {kinopoisk_id}, IMDB: {imdb_id})")
-                return {
-                    'source': self.name,
-                    'found': True,
-                    'translations': [{
-                        'name': 'Vidplay Player',
-                        'quality': 'HD',
-                        'url': ''
-                    }]
-                }
-            else:
-                logger.info(f"[{self.name}] ℹ️ Нет ID для поиска")
-            return None
-        except Exception as e:
-            logger.error(f"[{self.name}] ❌ Ошибка: {e}")
-            return None
-
-class HDRezkaBalancer(VideoSource):
-    """HDRezka - популярный онлайн кинотеатр"""
-    def __init__(self):
-        super().__init__('HDRezka')
+        super().__init__('Zetflix')
     
     async def search(self, movie: Dict) -> Optional[Dict]:
         try:
             kinopoisk_id = movie.get('kinopoiskId')
             
             if kinopoisk_id:
-                logger.info(f"[{self.name}] ✅ Поиск по KP ID: {kinopoisk_id}")
+                logger.info(f"[{self.name}] ✅ Фильм доступен (KP: {kinopoisk_id})")
                 return {
                     'source': self.name,
                     'found': True,
                     'translations': [{
-                        'name': 'HDRezka',
-                        'quality': 'HD/FullHD',
+                        'name': 'Zetflix Player',
+                        'quality': 'HD',
                         'url': ''
                     }]
                 }
             else:
                 logger.info(f"[{self.name}] ℹ️ Нет Kinopoisk ID")
+            return None
+        except Exception as e:
+            logger.error(f"[{self.name}] ❌ Ошибка: {e}")
+            return None
+
+class VoidBoostBalancer(VideoSource):
+    """VoidBoost - популярный балансер"""
+    def __init__(self):
+        super().__init__('VoidBoost')
+    
+    async def search(self, movie: Dict) -> Optional[Dict]:
+        try:
+            kinopoisk_id = movie.get('kinopoiskId')
+            imdb_id = movie.get('imdbId')
+            
+            if kinopoisk_id or imdb_id:
+                logger.info(f"[{self.name}] ✅ Поиск по ID (KP: {kinopoisk_id}, IMDB: {imdb_id})")
+                return {
+                    'source': self.name,
+                    'found': True,
+                    'translations': [{
+                        'name': 'VoidBoost',
+                        'quality': 'HD/FullHD',
+                        'url': ''
+                    }]
+                }
+            else:
+                logger.info(f"[{self.name}] ℹ️ Нет ID")
             return None
         except Exception as e:
             logger.error(f"[{self.name}] ❌ Ошибка: {e}")
@@ -313,8 +312,8 @@ class SourceManager:
 
 # Создаем менеджер и регистрируем источники
 source_manager = SourceManager()
-source_manager.register_source(VidplayBalancer())
-source_manager.register_source(HDRezkaBalancer())
+source_manager.register_source(ZetflixBalancer())
+source_manager.register_source(VoidBoostBalancer())
 source_manager.register_source(CollapsBalancer())
 source_manager.register_source(KinoboxBalancer())
 
